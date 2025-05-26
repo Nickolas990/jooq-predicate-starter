@@ -1,6 +1,5 @@
 package com.example.jooqpredicate;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.jooq.Condition;
 import org.jooq.Field;
 import org.jooq.Table;
@@ -22,8 +21,8 @@ public class JooqPredicateArgumentResolver implements HandlerMethodArgumentResol
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
-        return parameter.hasParameterAnnotation(JooqPredicate.class) &&
-               Condition.class.isAssignableFrom(parameter.getParameterType());
+        return parameter.hasParameterAnnotation(JooqPredicate.class)
+                && Condition.class.isAssignableFrom(parameter.getParameterType());
     }
 
     @Override
@@ -35,6 +34,7 @@ public class JooqPredicateArgumentResolver implements HandlerMethodArgumentResol
         JooqPredicate annotation = parameter.getParameterAnnotation(JooqPredicate.class);
         Class<?> tableClass = annotation.table();
 
+        // Получаем статическое поле типа Table<?> (например, Users.USERS)
         Table<?> table = Arrays.stream(tableClass.getFields())
                 .filter(f -> Modifier.isStatic(f.getModifiers()) && Table.class.isAssignableFrom(f.getType()))
                 .findFirst()
@@ -47,45 +47,20 @@ public class JooqPredicateArgumentResolver implements HandlerMethodArgumentResol
                 })
                 .orElseThrow(() -> new IllegalArgumentException("Table class must expose a static Table field"));
 
+        // Получаем карту fieldName -> Field
         Map<String, Field<?>> fieldMap = Arrays.stream(table.fields())
                 .collect(Collectors.toMap(Field::getName, java.util.function.Function.identity()));
 
-        Map<String, String[]> paramMap = ((HttpServletRequest) webRequest.getNativeRequest()).getParameterMap();
-        Map<String, Object> values = new HashMap<>();
-        for (Map.Entry<String, String[]> entry : paramMap.entrySet()) {
-            if (entry.getValue().length > 0) {
-                values.put(entry.getKey(), entry.getValue()[0]);
+        // Собираем query-параметры вида key -> value
+        Map<String, String> queryParams = new HashMap<>();
+        webRequest.getParameterMap().forEach((key, values) -> {
+            if (values.length > 0) {
+                queryParams.put(key, values[0]);
             }
-        }
+        });
 
-        Object dto = mapToDto(parameter.getParameterType(), values);
-
-        @SuppressWarnings("unchecked")
         JooqPredicateBuilder<Object> builder = new JooqPredicateBuilder<>(fieldMap);
-        return builder.build((Map<String, String>) dto);
-    }
 
-    private Object mapToDto(Class<?> dtoClass, Map<String, Object> values) {
-        try {
-            Object dto = dtoClass.getDeclaredConstructor().newInstance();
-            for (java.lang.reflect.Field field : dtoClass.getDeclaredFields()) {
-                field.setAccessible(true);
-                Object value = values.get(field.getName());
-                if (value != null) {
-                    field.set(dto, convertTo(value.toString(), field.getType()));
-                }
-            }
-            return dto;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to bind DTO", e);
-        }
-    }
-
-    private Object convertTo(String value, Class<?> type) {
-        if (type == String.class) return value;
-        if (type == Integer.class || type == int.class) return Integer.valueOf(value);
-        if (type == Long.class || type == long.class) return Long.valueOf(value);
-        if (type == Boolean.class || type == boolean.class) return Boolean.valueOf(value);
-        return null;
+        return builder.build(queryParams);
     }
 }
